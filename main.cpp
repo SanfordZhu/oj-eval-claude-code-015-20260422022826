@@ -9,7 +9,7 @@
 
 constexpr size_t MAX_INDEX_LEN = 64;
 constexpr char DATA_FILE[] = "data.bin";
-constexpr int NUM_BUCKETS = 1009;  // Prime number
+constexpr int NUM_BUCKETS = 10007;  // Larger prime for better distribution
 constexpr int MAX_RECORDS_PER_BUCKET = 200;  // Allow some overflow
 
 #pragma pack(push, 1)
@@ -45,8 +45,12 @@ private:
     int total_records;
 
     size_t hash(const std::string& str) const {
-        std::hash<std::string> hasher;
-        return hasher(str) % NUM_BUCKETS;
+        // Simple but decent hash function
+        size_t h = 5381;
+        for (char c : str) {
+            h = ((h << 5) + h) + c;  // h * 33 + c
+        }
+        return h % NUM_BUCKETS;
     }
 
     std::streampos get_bucket_offset(size_t bucket_idx) const {
@@ -152,7 +156,6 @@ public:
 
         // Update bucket head
         write_bucket_head(bucket_idx, new_idx);
-        file.flush();
     }
 
     void remove(const std::string& index, int32_t value) {
@@ -167,7 +170,6 @@ public:
             // Mark as inactive
             first_rec.active = false;
             write_record(head, first_rec);
-            file.flush();
             return;
         }
 
@@ -180,7 +182,6 @@ public:
                 // Mark as inactive
                 rec.active = false;
                 write_record(curr, rec);
-                file.flush();
                 return;
             }
             prev = curr;
