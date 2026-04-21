@@ -9,7 +9,7 @@
 
 constexpr size_t MAX_INDEX_LEN = 64;
 constexpr char DATA_FILE[] = "data.bin";
-constexpr int NUM_BUCKETS = 10007;  // Larger prime for better distribution
+constexpr int NUM_BUCKETS = 50021;  // Even larger prime for better distribution
 constexpr int MAX_RECORDS_PER_BUCKET = 200;  // Allow some overflow
 
 #pragma pack(push, 1)
