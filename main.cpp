@@ -9,7 +9,7 @@
 
 constexpr size_t MAX_INDEX_LEN = 64;
 constexpr char DATA_FILE[] = "data.bin";
-constexpr int NUM_BUCKETS = 50021;  // Even larger prime for better distribution
+constexpr int NUM_BUCKETS = 100003;  // Prime > 100000 (max records)
 constexpr int MAX_RECORDS_PER_BUCKET = 200;  // Allow some overflow
 
 #pragma pack(push, 1)
@@ -45,10 +45,11 @@ private:
     int total_records;
 
     size_t hash(const std::string& str) const {
-        // Simple but decent hash function
-        size_t h = 5381;
+        // FNV-1a hash function
+        size_t h = 14695981039346656037ULL;
         for (char c : str) {
-            h = ((h << 5) + h) + c;  // h * 33 + c
+            h ^= static_cast<unsigned char>(c);
+            h *= 1099511628211ULL;
         }
         return h % NUM_BUCKETS;
     }
