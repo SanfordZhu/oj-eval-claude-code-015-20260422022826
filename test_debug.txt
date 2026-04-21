@@ -1,0 +1,7 @@
+6
+insert a 1
+insert b 2
+find a
+find b
+delete c 3  # non-existent
+find b

@@ -1,0 +1,3 @@
+2
+insert x 1
+find x

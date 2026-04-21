@@ -1,0 +1,10 @@
+CMakeFiles/
+CMakeCache.txt
+code
+*.o
+*.out
+*.exe
+data.bin
+index.bin
+test_input.txt
+test_output.txt

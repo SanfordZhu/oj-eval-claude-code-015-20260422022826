@@ -1,0 +1,5 @@
+4
+insert x 1
+find x
+delete x 2  # non-existent
+find x

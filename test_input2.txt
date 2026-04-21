@@ -1,0 +1,12 @@
+11
+insert a 1
+insert a 2
+insert a 3
+insert b 10
+insert b 20
+find a
+find b
+delete a 2
+find a
+delete b 30
+find b
