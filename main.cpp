@@ -5,35 +5,37 @@
 #include <algorithm>
 #include <cstring>
 #include <cstdint>
-#include <functional>
 
 constexpr size_t MAX_INDEX_LEN = 64;
 constexpr char DATA_FILE[] = "data.bin";
-constexpr int NUM_BUCKETS = 10007;  // Larger prime for better distribution
-constexpr int MAX_RECORDS_PER_BUCKET = 200;  // Allow some overflow
+constexpr int TABLE_SIZE = 100003;  // Prime number, slightly larger than max records
 
 #pragma pack(push, 1)
-struct Record {
+struct Slot {
     char index[MAX_INDEX_LEN];
     int32_t value;
     bool active;
-    int32_t next;  // Index of next record in overflow chain, -1 for none
+    bool occupied;
 
-    Record() : value(0), active(false), next(-1) {
+    Slot() : value(0), active(false), occupied(false) {
         memset(index, 0, MAX_INDEX_LEN);
     }
 
-    Record(const std::string& idx, int32_t val) : value(val), active(true), next(-1) {
+    Slot(const std::string& idx, int32_t val) : value(val), active(true), occupied(true) {
         memset(index, 0, MAX_INDEX_LEN);
         strncpy(index, idx.c_str(), MAX_INDEX_LEN - 1);
     }
 
     bool matches(const std::string& idx, int32_t val) const {
-        return active && (strcmp(index, idx.c_str()) == 0) && (value == val);
+        return occupied && active && (strcmp(index, idx.c_str()) == 0) && (value == val);
     }
 
     bool matches_index(const std::string& idx) const {
-        return active && (strcmp(index, idx.c_str()) == 0);
+        return occupied && active && (strcmp(index, idx.c_str()) == 0);
+    }
+
+    bool is_empty() const {
+        return !occupied;
     }
 };
 #pragma pack(pop)
@@ -41,88 +43,47 @@ struct Record {
 class FileStorage {
 private:
     std::fstream file;
-    std::streampos bucket_start;
-    int total_records;
 
     size_t hash(const std::string& str) const {
-        // Simple but decent hash function
         size_t h = 5381;
         for (char c : str) {
             h = ((h << 5) + h) + c;  // h * 33 + c
         }
-        return h % NUM_BUCKETS;
+        return h % TABLE_SIZE;
     }
 
-    std::streampos get_bucket_offset(size_t bucket_idx) const {
-        return bucket_start + bucket_idx * sizeof(int32_t);
+    std::streampos get_slot_offset(size_t slot_idx) const {
+        return slot_idx * sizeof(Slot);
     }
 
-    std::streampos get_record_offset(int record_idx) const {
-        return bucket_start + NUM_BUCKETS * sizeof(int32_t) + record_idx * sizeof(Record);
-    }
-
-    int read_bucket_head(size_t bucket_idx) {
-        std::streampos pos = get_bucket_offset(bucket_idx);
+    Slot read_slot(size_t slot_idx) {
+        std::streampos pos = get_slot_offset(slot_idx);
         file.seekg(pos);
-        int head;
-        file.read(reinterpret_cast<char*>(&head), sizeof(int));
-        return head;
+        Slot slot;
+        file.read(reinterpret_cast<char*>(&slot), sizeof(Slot));
+        return slot;
     }
 
-    void write_bucket_head(size_t bucket_idx, int head) {
-        std::streampos pos = get_bucket_offset(bucket_idx);
+    void write_slot(size_t slot_idx, const Slot& slot) {
+        std::streampos pos = get_slot_offset(slot_idx);
         file.seekp(pos);
-        file.write(reinterpret_cast<const char*>(&head), sizeof(int));
-    }
-
-    Record read_record(int record_idx) {
-        std::streampos pos = get_record_offset(record_idx);
-        file.seekg(pos);
-        Record rec;
-        file.read(reinterpret_cast<char*>(&rec), sizeof(Record));
-        return rec;
-    }
-
-    void write_record(int record_idx, const Record& rec) {
-        std::streampos pos = get_record_offset(record_idx);
-        file.seekp(pos);
-        file.write(reinterpret_cast<const char*>(&rec), sizeof(Record));
-    }
-
-    int allocate_record() {
-        int new_idx = total_records;
-        total_records++;
-        return new_idx;
+        file.write(reinterpret_cast<const char*>(&slot), sizeof(Slot));
     }
 
 public:
-    FileStorage() : total_records(0) {
+    FileStorage() {
         // Open or create file
         file.open(DATA_FILE, std::ios::binary | std::ios::in | std::ios::out);
         if (!file) {
-            // Create new file
+            // Create new file with initial size
             file.open(DATA_FILE, std::ios::binary | std::ios::out);
+            // Initialize all slots as empty
+            Slot empty_slot;
+            for (int i = 0; i < TABLE_SIZE; i++) {
+                file.write(reinterpret_cast<const char*>(&empty_slot), sizeof(Slot));
+            }
             file.close();
             file.open(DATA_FILE, std::ios::binary | std::ios::in | std::ios::out);
-
-            // Initialize bucket heads to -1
-            bucket_start = 0;
-            for (int i = 0; i < NUM_BUCKETS; i++) {
-                int head = -1;
-                file.write(reinterpret_cast<const char*>(&head), sizeof(int));
-            }
-            file.flush();
-        } else {
-            // File exists, read total_records from end
-            file.seekg(0, std::ios::end);
-            std::streampos file_size = file.tellg();
-            bucket_start = 0;
-
-            // Calculate total_records
-            std::streampos records_start = NUM_BUCKETS * sizeof(int32_t);
-            if (file_size > records_start) {
-                total_records = (file_size - records_start) / sizeof(Record);
-            }
         }
     }
 
@@ -133,76 +94,67 @@ public:
     }
 
     void insert(const std::string& index, int32_t value) {
-        size_t bucket_idx = hash(index);
-        int head = read_bucket_head(bucket_idx);
+        size_t h = hash(index);
+        size_t start = h;
 
-        // Check if already exists
-        int curr = head;
-        while (curr != -1) {
-            Record rec = read_record(curr);
-            if (rec.matches(index, value)) {
+        // First, check if already exists
+        do {
+            Slot slot = read_slot(h);
+            if (slot.matches(index, value)) {
                 return;  // Already exists
             }
-            curr = rec.next;
-        }
+            if (slot.is_empty()) {
+                break;  // Will insert here
+            }
+            h = (h + 1) % TABLE_SIZE;
+        } while (h != start);
 
-        // Create new record
-        int new_idx = allocate_record();
-        Record new_rec(index, value);
-        new_rec.next = head;
-
-        // Write record
-        write_record(new_idx, new_rec);
-
-        // Update bucket head
-        write_bucket_head(bucket_idx, new_idx);
+        // Find empty slot (guaranteed to find one since TABLE_SIZE > max records)
+        h = start;
+        do {
+            Slot slot = read_slot(h);
+            if (slot.is_empty()) {
+                Slot new_slot(index, value);
+                write_slot(h, new_slot);
+                return;
+            }
+            h = (h + 1) % TABLE_SIZE;
+        } while (h != start);
     }
 
     void remove(const std::string& index, int32_t value) {
-        size_t bucket_idx = hash(index);
-        int head = read_bucket_head(bucket_idx);
+        size_t h = hash(index);
+        size_t start = h;
 
-        if (head == -1) return;
-
-        // Check first record
-        Record first_rec = read_record(head);
-        if (first_rec.matches(index, value)) {
-            // Mark as inactive
-            first_rec.active = false;
-            write_record(head, first_rec);
-            return;
-        }
-
-        // Traverse list
-        int prev = head;
-        int curr = first_rec.next;
-        while (curr != -1) {
-            Record rec = read_record(curr);
-            if (rec.matches(index, value)) {
-                // Mark as inactive
-                rec.active = false;
-                write_record(curr, rec);
+        do {
+            Slot slot = read_slot(h);
+            if (slot.matches(index, value)) {
+                slot.active = false;
+                write_slot(h, slot);
                 return;
             }
-            prev = curr;
-            curr = rec.next;
-        }
-        // Not found
+            if (slot.is_empty()) {
+                break;  // Not found
+            }
+            h = (h + 1) % TABLE_SIZE;
+        } while (h != start);
     }
 
     std::vector<int32_t> find(const std::string& index) {
         std::vector<int32_t> values;
-        size_t bucket_idx = hash(index);
-        int head = read_bucket_head(bucket_idx);
+        size_t h = hash(index);
+        size_t start = h;
 
-        int curr = head;
-        while (curr != -1) {
-            Record rec = read_record(curr);
-            if (rec.matches_index(index)) {
-                values.push_back(rec.value);
+        do {
+            Slot slot = read_slot(h);
+            if (slot.matches_index(index)) {
+                values.push_back(slot.value);
             }
-            curr = rec.next;
-        }
+            if (slot.is_empty()) {
+                break;
+            }
+            h = (h + 1) % TABLE_SIZE;
+        } while (h != start);
 
         std::sort(values.begin(), values.end());
         return values;
