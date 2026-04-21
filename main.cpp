@@ -136,26 +136,39 @@ public:
         size_t bucket_idx = hash(index);
         int head = read_bucket_head(bucket_idx);
 
-        // Check if already exists
+        // Check if already exists and find insertion position (sorted by value)
         int curr = head;
+        int prev = -1;
         while (curr != -1) {
             Record rec = read_record(curr);
             if (rec.matches(index, value)) {
                 return;  // Already exists
             }
+            if (rec.matches_index(index) && rec.value > value) {
+                // Found insertion point: before this record
+                break;
+            }
+            prev = curr;
             curr = rec.next;
         }
 
         // Create new record
         int new_idx = allocate_record();
         Record new_rec(index, value);
-        new_rec.next = head;
 
-        // Write record
-        write_record(new_idx, new_rec);
-
-        // Update bucket head
-        write_bucket_head(bucket_idx, new_idx);
+        if (prev == -1) {
+            // Insert at head
+            new_rec.next = head;
+            write_record(new_idx, new_rec);
+            write_bucket_head(bucket_idx, new_idx);
+        } else {
+            // Insert after prev
+            Record prev_rec = read_record(prev);
+            new_rec.next = prev_rec.next;
+            write_record(new_idx, new_rec);
+            prev_rec.next = new_idx;
+            write_record(prev, prev_rec);
+        }
     }
 
     void remove(const std::string& index, int32_t value) {
@@ -204,7 +217,7 @@ public:
             curr = rec.next;
         }
 
-        std::sort(values.begin(), values.end());
+        // Values are already sorted due to insert order
         return values;
     }
 };
